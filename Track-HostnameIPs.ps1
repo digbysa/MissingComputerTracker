@@ -3,7 +3,7 @@ param(
     [string]$SourceInputPath = 'C:\Users\da1701_sa\Desktop\New-Inventory-Tool\Output\MissingDeviceList.csv',
     [string]$LocalInputFileName = 'MissingDeviceList.csv',
     [string]$OutputFolderName = 'Output',
-    [string]$OutputFileName = 'SearchedDeviceList.csv',
+    [string]$OutputFileName = 'SearchedDeviceList.xlsx',
     [string]$SubnetFileName = 'SiteSubnets.csv',
     [int]$PingCount = 1,
     [int]$TimeoutSeconds = 2
@@ -63,9 +63,24 @@ function Get-IpAddressForHostname {
         [int]$Timeout = 2
     )
 
+    $testResult = $null
+
     try {
         $testResult = Test-Connection -ComputerName $Hostname -Count $Count -TimeoutSeconds $Timeout -ErrorAction Stop |
             Select-Object -First 1
+    }
+    catch {
+        try {
+            # Windows PowerShell 5.1 does not support -TimeoutSeconds.
+            $testResult = Test-Connection -ComputerName $Hostname -Count $Count -ErrorAction Stop |
+                Select-Object -First 1
+        }
+        catch {
+            # Continue to DNS fallback.
+        }
+    }
+
+    if ($null -ne $testResult) {
 
         if ($null -ne $testResult -and $null -ne $testResult.IPV4Address) {
             return [pscustomobject]@{
@@ -80,9 +95,6 @@ function Get-IpAddressForHostname {
                 IpAddress     = [string]$testResult.Address
             }
         }
-    }
-    catch {
-        # Continue to DNS fallback.
     }
 
     try {
@@ -139,6 +151,28 @@ function Get-LoggedOnUser {
         }
     }
     catch {
+        # Continue to quser fallback.
+    }
+
+    try {
+        $quserOutput = @(quser /server:$Hostname 2>$null)
+        foreach ($line in $quserOutput) {
+            if ([string]::IsNullOrWhiteSpace($line) -or $line -match '^\s*USERNAME\s+') {
+                continue
+            }
+
+            $normalized = [string]$line
+            if ($normalized.StartsWith('>')) {
+                $normalized = $normalized.Substring(1)
+            }
+
+            $tokens = $normalized.Trim() -split '\s+'
+            if ($tokens.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($tokens[0])) {
+                return [string]$tokens[0]
+            }
+        }
+    }
+    catch {
         return ''
     }
 
@@ -185,7 +219,40 @@ function Set-SuccessPingHighlight {
         $workbook.SaveAs($XlsxPath, 51)
     }
     catch {
-        Write-Warning "Unable to create formatted workbook '$XlsxPath'. CSV output was still generated. Error: $($_.Exception.Message)"
+        Write-Warning "Unable to create formatted workbook '$XlsxPath'. Error: $($_.Exception.Message)"
+    }
+    finally {
+        if ($workbook) {
+            $workbook.Close($false)
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
+        }
+
+        if ($excel) {
+            $excel.Quit()
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+        }
+
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+}
+
+function Convert-XlsxToCsv {
+    param(
+        [Parameter(Mandatory = $true)][string]$XlsxPath,
+        [Parameter(Mandatory = $true)][string]$CsvPath
+    )
+
+    $excel = $null
+    $workbook = $null
+
+    try {
+        $excel = New-Object -ComObject Excel.Application
+        $excel.Visible = $false
+        $excel.DisplayAlerts = $false
+
+        $workbook = $excel.Workbooks.Open($XlsxPath)
+        $workbook.SaveAs($CsvPath, 6)
     }
     finally {
         if ($workbook) {
@@ -257,7 +324,8 @@ function Get-DeviceKey {
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $localInputPath = Join-Path -Path $scriptRoot -ChildPath $LocalInputFileName
 $outputFolderPath = Join-Path -Path $scriptRoot -ChildPath $OutputFolderName
-$outputCsvPath = Join-Path -Path $outputFolderPath -ChildPath $OutputFileName
+$outputWorkbookPath = Join-Path -Path $outputFolderPath -ChildPath $OutputFileName
+$outputCsvPath = [System.IO.Path]::ChangeExtension($outputWorkbookPath, '.csv')
 $subnetPath = Join-Path -Path $scriptRoot -ChildPath $SubnetFileName
 
 if (Test-Path -LiteralPath $SourceInputPath) {
@@ -311,9 +379,25 @@ if (Test-Path -LiteralPath $subnetPath) {
 
 $existingRowsByDeviceKey = @{}
 $maxPreviousDataIndex = 0
+$existingRows = @()
 
-if (Test-Path -LiteralPath $outputCsvPath) {
+$existingDataTempCsvPath = Join-Path -Path $outputFolderPath -ChildPath 'SearchedDeviceList.previous.tmp.csv'
+
+if (Test-Path -LiteralPath $outputWorkbookPath) {
+    Convert-XlsxToCsv -XlsxPath $outputWorkbookPath -CsvPath $existingDataTempCsvPath
+}
+
+if (Test-Path -LiteralPath $existingDataTempCsvPath) {
+    $existingRows = Import-Csv -LiteralPath $existingDataTempCsvPath
+
+    Remove-Item -LiteralPath $existingDataTempCsvPath -Force
+}
+elseif (Test-Path -LiteralPath $outputCsvPath) {
     $existingRows = Import-Csv -LiteralPath $outputCsvPath
+    Remove-Item -LiteralPath $outputCsvPath -Force
+}
+
+if ($existingRows) {
 
     foreach ($existingRow in $existingRows) {
         $deviceKey = Get-DeviceKey -Row $existingRow
@@ -553,11 +637,14 @@ $finalRows = foreach ($row in ($resultRows | Sort-Object 'Name', 'Asset Tag')) {
 
 $finalRows | Export-Csv -LiteralPath $outputCsvPath -NoTypeInformation -Force
 
-$outputWorkbookPath = [System.IO.Path]::ChangeExtension($outputCsvPath, '.xlsx')
 Set-SuccessPingHighlight -CsvPath $outputCsvPath -XlsxPath $outputWorkbookPath
+
+if (Test-Path -LiteralPath $outputCsvPath) {
+    Remove-Item -LiteralPath $outputCsvPath -Force
+}
 
 if (Test-Path -LiteralPath $localInputPath) {
     Remove-Item -LiteralPath $localInputPath -Force
 }
 
-Write-Host "Tracker run complete. Output written to: $outputCsvPath"
+Write-Host "Tracker run complete. Output written to: $outputWorkbookPath"
