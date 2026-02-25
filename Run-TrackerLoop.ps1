@@ -1,16 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ScriptPath,
-
-    [Parameter(Mandatory = $true)]
-    [string]$InputCsvPath,
-
-    [Parameter(Mandatory = $true)]
-    [string]$OutputCsvPath,
-
-    [TimeSpan[]]$RunTimes = @([TimeSpan]::FromHours(8), [TimeSpan]::FromHours(20)),
-
+    [string]$ScriptPath = (Join-Path -Path $PSScriptRoot -ChildPath 'Track-HostnameIPs.ps1'),
+    [TimeSpan[]]$RunTimes = @([TimeSpan]::FromHours(10), [TimeSpan]::FromHours(15)),
     [int]$PollSeconds = 30
 )
 
@@ -46,7 +37,7 @@ while ($true) {
             $lastRunSlotKey = $slotKey
 
             Write-Host "Running tracker for slot $currentSlot at $(Get-Date -Format o)..."
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -InputCsvPath $InputCsvPath -OutputCsvPath $OutputCsvPath
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Warning "Tracker exited with code $LASTEXITCODE"
