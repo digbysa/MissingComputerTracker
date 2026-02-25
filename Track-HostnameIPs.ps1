@@ -12,20 +12,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Convert-IPv4ToUInt32 {
-    param([Parameter(Mandatory = $true)][string]$IpAddress)
-
-    $ipObj = [System.Net.IPAddress]::Parse($IpAddress)
-    $bytes = $ipObj.GetAddressBytes()
-
-    if ($bytes.Length -ne 4) {
-        throw "Only IPv4 addresses are supported: $IpAddress"
-    }
-
-    [Array]::Reverse($bytes)
-    return [BitConverter]::ToUInt32($bytes, 0)
-}
-
 function Test-IpInCidr {
     param(
         [Parameter(Mandatory = $true)][string]$IpAddress,
@@ -40,21 +26,34 @@ function Test-IpInCidr {
     $prefixLength = [int]$Matches[2]
 
     try {
-        $ipInt = Convert-IPv4ToUInt32 -IpAddress $IpAddress
-        $networkInt = Convert-IPv4ToUInt32 -IpAddress $networkIp
+        $ipBytes = [System.Net.IPAddress]::Parse($IpAddress).GetAddressBytes()
+        $networkBytes = [System.Net.IPAddress]::Parse($networkIp).GetAddressBytes()
     }
     catch {
         return $false
     }
 
-    $mask = if ($prefixLength -eq 0) {
-        [uint32]0
-    }
-    else {
-        [uint32](0xFFFFFFFF -shl (32 - $prefixLength))
+    if ($ipBytes.Length -ne 4 -or $networkBytes.Length -ne 4) {
+        return $false
     }
 
-    return (($ipInt -band $mask) -eq ($networkInt -band $mask))
+    $fullBytesToCompare = [int][Math]::Floor($prefixLength / 8)
+    $remainingBits = $prefixLength % 8
+
+    for ($i = 0; $i -lt $fullBytesToCompare; $i++) {
+        if ($ipBytes[$i] -ne $networkBytes[$i]) {
+            return $false
+        }
+    }
+
+    if ($remainingBits -gt 0) {
+        $partialMask = [byte](0xFF -shl (8 - $remainingBits))
+        if (($ipBytes[$fullBytesToCompare] -band $partialMask) -ne ($networkBytes[$fullBytesToCompare] -band $partialMask)) {
+            return $false
+        }
+    }
+
+    return $true
 }
 
 function Get-IpAddressForHostname {
