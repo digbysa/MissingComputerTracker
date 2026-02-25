@@ -18,17 +18,21 @@ Input columns required in `MissingDeviceList.csv`:
 - `Name`
 - `Asset Tag`
 - `Location`
+- `Room`
 
 Output includes:
 
 - `Name`
 - `Asset Tag` (unique key)
 - `Location` (updated from newest input row for each asset tag)
+- `Room` (updated from newest input row for each asset tag)
 - `Successfully Pinged` (`Yes` if ping succeeded at least once across runs)
 - `Latest Data --> IP Date / IP Address / Subnet / Logged User`
 - `Previous Data N --> IP Date / IP Address / Subnet / Logged User` for IP history
 
 > Note: CSV cannot create true merged Excel headers. The script uses grouped header names (for example, `Latest Data --> ...`) to preserve the same structure in CSV form.
+
+If Microsoft Excel is available on the machine running the script, it also writes `SearchedDeviceList.xlsx` with the `Successfully Pinged` cells colored light green when the value is `Yes`.
 
 Subnet lookup:
 
