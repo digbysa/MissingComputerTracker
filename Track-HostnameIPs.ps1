@@ -144,6 +144,24 @@ function Get-HistoryValue {
     return [string]$property.Value
 }
 
+function Get-DeviceKey {
+    param(
+        [Parameter(Mandatory = $true)]$Row
+    )
+
+    $name = [string](Get-HistoryValue -Row $Row -PropertyName 'Name')
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+        return "NAME::$($name.Trim().ToUpperInvariant())"
+    }
+
+    $assetTag = [string](Get-HistoryValue -Row $Row -PropertyName 'Asset Tag')
+    if (-not [string]::IsNullOrWhiteSpace($assetTag)) {
+        return "ASSET::$($assetTag.Trim().ToUpperInvariant())"
+    }
+
+    return ''
+}
+
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $localInputPath = Join-Path -Path $scriptRoot -ChildPath $LocalInputFileName
 $outputFolderPath = Join-Path -Path $scriptRoot -ChildPath $OutputFolderName
@@ -199,16 +217,16 @@ if (Test-Path -LiteralPath $subnetPath) {
     }
 }
 
-$existingRowsByAssetTag = @{}
+$existingRowsByDeviceKey = @{}
 $maxPreviousDataIndex = 0
 
 if (Test-Path -LiteralPath $outputCsvPath) {
     $existingRows = Import-Csv -LiteralPath $outputCsvPath
 
     foreach ($existingRow in $existingRows) {
-        $assetTag = [string](Get-HistoryValue -Row $existingRow -PropertyName 'Asset Tag')
-        if (-not [string]::IsNullOrWhiteSpace($assetTag)) {
-            $existingRowsByAssetTag[$assetTag] = $existingRow
+        $deviceKey = Get-DeviceKey -Row $existingRow
+        if (-not [string]::IsNullOrWhiteSpace($deviceKey)) {
+            $existingRowsByDeviceKey[$deviceKey] = $existingRow
         }
 
         foreach ($prop in $existingRow.PSObject.Properties) {
@@ -222,19 +240,19 @@ if (Test-Path -LiteralPath $outputCsvPath) {
     }
 }
 
-$inputRowsByAssetTag = @{}
+$inputRowsByDeviceKey = @{}
 foreach ($inputRow in $inputRows) {
-    $assetTag = [string]$inputRow.'Asset Tag'
-    if ([string]::IsNullOrWhiteSpace($assetTag)) {
+    $deviceKey = Get-DeviceKey -Row $inputRow
+    if ([string]::IsNullOrWhiteSpace($deviceKey)) {
         continue
     }
 
-    if ($inputRowsByAssetTag.ContainsKey($assetTag)) {
+    if ($inputRowsByDeviceKey.ContainsKey($deviceKey)) {
         $existingTimestamp = $null
         $incomingTimestamp = $null
 
-        if ($inputRowsByAssetTag[$assetTag].Timestamp) {
-            [DateTime]::TryParse([string]$inputRowsByAssetTag[$assetTag].Timestamp, [ref]$existingTimestamp) | Out-Null
+        if ($inputRowsByDeviceKey[$deviceKey].Timestamp) {
+            [DateTime]::TryParse([string]$inputRowsByDeviceKey[$deviceKey].Timestamp, [ref]$existingTimestamp) | Out-Null
         }
 
         if ($inputRow.Timestamp) {
@@ -242,25 +260,37 @@ foreach ($inputRow in $inputRows) {
         }
 
         if ($null -eq $existingTimestamp -or ($null -ne $incomingTimestamp -and $incomingTimestamp -gt $existingTimestamp)) {
-            $inputRowsByAssetTag[$assetTag] = $inputRow
+            $inputRowsByDeviceKey[$deviceKey] = $inputRow
         }
     }
     else {
-        $inputRowsByAssetTag[$assetTag] = $inputRow
+        $inputRowsByDeviceKey[$deviceKey] = $inputRow
     }
 }
 
-$nowUtc = (Get-Date).ToUniversalTime().ToString('s') + 'Z'
+$nowLocalFormatted = Get-Date -Format 'MM-dd-yyyy - HH:mm'
 $resultRows = @()
 
-foreach ($assetTag in ($inputRowsByAssetTag.Keys | Sort-Object)) {
-    $inputRow = $inputRowsByAssetTag[$assetTag]
-    $hostname = [string]$inputRow.Name
-    $location = [string]$inputRow.Location
+$allDeviceKeys = @($existingRowsByDeviceKey.Keys + $inputRowsByDeviceKey.Keys | Sort-Object -Unique)
 
-    $existingRow = $null
-    if ($existingRowsByAssetTag.ContainsKey($assetTag)) {
-        $existingRow = $existingRowsByAssetTag[$assetTag]
+foreach ($deviceKey in $allDeviceKeys) {
+    $inputRow = if ($inputRowsByDeviceKey.ContainsKey($deviceKey)) { $inputRowsByDeviceKey[$deviceKey] } else { $null }
+    $existingRow = if ($existingRowsByDeviceKey.ContainsKey($deviceKey)) { $existingRowsByDeviceKey[$deviceKey] } else { $null }
+
+    $hostname = if ($inputRow) { [string]$inputRow.Name } else { [string](Get-HistoryValue -Row $existingRow -PropertyName 'Name') }
+    $assetTag = if ($inputRow) { [string]$inputRow.'Asset Tag' } else { [string](Get-HistoryValue -Row $existingRow -PropertyName 'Asset Tag') }
+    $location = if ($inputRow) { [string]$inputRow.Location } else { [string](Get-HistoryValue -Row $existingRow -PropertyName 'Location') }
+
+    if ([string]::IsNullOrWhiteSpace($hostname) -and $existingRow) {
+        $hostname = [string](Get-HistoryValue -Row $existingRow -PropertyName 'Name')
+    }
+
+    if ([string]::IsNullOrWhiteSpace($assetTag) -and $existingRow) {
+        $assetTag = [string](Get-HistoryValue -Row $existingRow -PropertyName 'Asset Tag')
+    }
+
+    if ([string]::IsNullOrWhiteSpace($location) -and $existingRow) {
+        $location = [string](Get-HistoryValue -Row $existingRow -PropertyName 'Location')
     }
 
     $ipAddress = ''
@@ -297,7 +327,7 @@ foreach ($assetTag in ($inputRowsByAssetTag.Keys | Sort-Object)) {
     $currentHistory = @()
     if ($existingRow) {
         $currentHistory += [pscustomobject]@{
-            IpDate    = Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> IP Date'
+                IpDate    = Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> IP Date'
             IpAddress = Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> IP Address'
             Subnet    = Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> Subnet'
             LoggedUser = Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> Logged User'
@@ -318,7 +348,7 @@ foreach ($assetTag in ($inputRowsByAssetTag.Keys | Sort-Object)) {
     if ($ipAddress -and $latestIpFromExisting -and $ipAddress -ne $latestIpFromExisting) {
         $currentHistory = @(
             [pscustomobject]@{
-                IpDate    = $nowUtc
+                IpDate    = $nowLocalFormatted
                 IpAddress = $ipAddress
                 Subnet    = $subnetLabel
                 LoggedUser = $loggedUser
@@ -334,7 +364,7 @@ foreach ($assetTag in ($inputRowsByAssetTag.Keys | Sort-Object)) {
     elseif (-not $existingRow) {
         $currentHistory = @(
             [pscustomobject]@{
-                IpDate    = if ($ipAddress) { $nowUtc } else { '' }
+                IpDate    = if ($ipAddress) { $nowLocalFormatted } else { '' }
                 IpAddress = $ipAddress
                 Subnet    = $subnetLabel
                 LoggedUser = $loggedUser
@@ -343,10 +373,10 @@ foreach ($assetTag in ($inputRowsByAssetTag.Keys | Sort-Object)) {
     }
     elseif ($ipAddress -and $latestIpFromExisting -eq $ipAddress) {
         if ($currentHistory.Count -eq 0) {
-            $currentHistory = @([pscustomobject]@{ IpDate = $nowUtc; IpAddress = $ipAddress; Subnet = $subnetLabel; LoggedUser = $loggedUser })
+            $currentHistory = @([pscustomobject]@{ IpDate = $nowLocalFormatted; IpAddress = $ipAddress; Subnet = $subnetLabel; LoggedUser = $loggedUser })
         }
         else {
-            $currentHistory[0].IpDate = $nowUtc
+            $currentHistory[0].IpDate = $nowLocalFormatted
             $currentHistory[0].IpAddress = $ipAddress
             $currentHistory[0].Subnet = $subnetLabel
             $currentHistory[0].LoggedUser = $loggedUser
@@ -406,7 +436,7 @@ foreach ($row in $resultRows) {
     }
 }
 
-$finalRows = foreach ($row in ($resultRows | Sort-Object 'Asset Tag')) {
+$finalRows = foreach ($row in ($resultRows | Sort-Object 'Name', 'Asset Tag')) {
     $ordered = [ordered]@{
         'Name'                = [string]$row.Name
         'Asset Tag'           = [string]$row.'Asset Tag'
