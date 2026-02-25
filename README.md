@@ -20,6 +20,7 @@ This output CSV is designed to be reused on each run so IP changes are tracked o
 ## Files
 
 - `Track-HostnameIPs.ps1` - main script.
+- `Run-TrackerLoop.ps1` - optional long-running scheduler loop (08:00 and 20:00).
 - `devices.csv` (you create this) - input list of hostnames.
 - `ip-tracking.csv` (script creates/updates this) - tracked output.
 
@@ -75,6 +76,33 @@ $trigger1 = New-ScheduledTaskTrigger -Daily -At 8:00AM
 $trigger2 = New-ScheduledTaskTrigger -Daily -At 8:00PM
 
 Register-ScheduledTask -TaskName 'MissingComputerTracker' -Action $action -Trigger @($trigger1, $trigger2) -Description 'Ping hostnames and track IP changes twice daily.'
+```
+
+## Run twice daily without Task Scheduler
+
+If you do not want to use Task Scheduler, use `Run-TrackerLoop.ps1`.
+
+This script runs continuously and executes `Track-HostnameIPs.ps1` at 08:00 and 20:00 each day.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-TrackerLoop.ps1 `
+  -ScriptPath .\Track-HostnameIPs.ps1 `
+  -InputCsvPath .\devices.csv `
+  -OutputCsvPath .\ip-tracking.csv
+```
+
+### Keep it running in the background
+
+- **Locked session:** works fine if the process is already running.
+- **If user logs off / machine reboots:** restart the loop via one of these:
+  - **Startup folder** (`shell:startup`) shortcut for login-based startup.
+  - **Windows service wrapper** (for example NSSM) if you need it to run without an interactive session.
+
+Example NSSM setup:
+
+```powershell
+nssm install MissingComputerTrackerLoop "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-NoProfile -ExecutionPolicy Bypass -File C:\Path\Run-TrackerLoop.ps1 -ScriptPath C:\Path\Track-HostnameIPs.ps1 -InputCsvPath C:\Path\devices.csv -OutputCsvPath C:\Path\ip-tracking.csv"
+nssm start MissingComputerTrackerLoop
 ```
 
 ## Notes
