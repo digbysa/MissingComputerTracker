@@ -47,7 +47,7 @@ function Test-IpInCidr {
     }
 
     if ($remainingBits -gt 0) {
-        $partialMask = [byte](0xFF -shl (8 - $remainingBits))
+        $partialMask = [byte](((0xFF00 -shr $remainingBits) -band 0xFF))
         if (($ipBytes[$fullBytesToCompare] -band $partialMask) -ne ($networkBytes[$fullBytesToCompare] -band $partialMask)) {
             return $false
         }
