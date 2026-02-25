@@ -1,112 +1,56 @@
 # MissingComputerTracker
 
-Track hostname reachability and IP address changes with **PowerShell only**.
+PowerShell tracker for missing devices using `MissingDeviceList.csv` input and `SearchedDeviceList.csv` output.
 
-## What this does
+## What it does
 
-`Track-HostnameIPs.ps1`:
-- Reads hostnames from an input CSV.
-- Pings each hostname (with DNS fallback).
-- Writes a tracking CSV that includes:
-  - current IP,
-  - previous IP,
-  - last seen timestamp,
-  - last IP change timestamp,
-  - IP change count,
-  - reachable/unreachable status.
+`Track-HostnameIPs.ps1` now performs the full workflow when run:
 
-This output CSV is designed to be reused on each run so IP changes are tracked over time.
+1. Checks for `C:\Users\da1701_sa\Desktop\New-Inventory-Tool\Output\MissingDeviceList.csv`.
+2. If found, copies/replaces `MissingDeviceList.csv` in the same folder as the script.
+3. Uses that local `MissingDeviceList.csv` as input.
+4. Updates/creates `Output\SearchedDeviceList.csv` in the same script folder.
+5. Removes local `MissingDeviceList.csv` after processing.
 
-## Files
+Input columns required in `MissingDeviceList.csv`:
 
-- `Track-HostnameIPs.ps1` - main script.
-- `Run-TrackerLoop.ps1` - optional long-running scheduler loop (08:00 and 20:00).
-- `devices.csv` (you create this) - input list of hostnames.
-- `ip-tracking.csv` (script creates/updates this) - tracked output.
+- `Timestamp`
+- `Name`
+- `Asset Tag`
+- `Location`
 
-## Input CSV format
+Output includes:
 
-Create a CSV with a `Hostname` column.
+- `Name`
+- `Asset Tag` (unique key)
+- `Location` (updated from newest input row for each asset tag)
+- `Successfully Pinged` (`Yes` if ping succeeded at least once across runs)
+- `Latest Data --> IP Date / IP Address / Subnet / Logged User`
+- `Previous Data N --> IP Date / IP Address / Subnet / Logged User` for IP history
 
-Example `devices.csv`:
+> Note: CSV cannot create true merged Excel headers. The script uses grouped header names (for example, `Latest Data --> ...`) to preserve the same structure in CSV form.
 
-```csv
-Hostname
-PC-001
-LAPTOP-22
-SERVER-FILE01
-```
+Subnet lookup:
+
+- Script reads `SiteSubnets.csv` from the same folder as the script.
+- First column = subnet CIDR (for example `10.0.0.0/24`), second column = display label.
 
 ## Run manually
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\Track-HostnameIPs.ps1 -InputCsvPath .\devices.csv -OutputCsvPath .\ip-tracking.csv
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Track-HostnameIPs.ps1
 ```
 
-If using Windows PowerShell 5.1:
+## Run at 10:00 AM and 3:00 PM daily
+
+Use `Run-TrackerLoop.ps1` (defaults to `10:00` and `15:00`):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Track-HostnameIPs.ps1 -InputCsvPath .\devices.csv -OutputCsvPath .\ip-tracking.csv
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-TrackerLoop.ps1
 ```
 
-## Schedule twice daily (Task Scheduler)
-
-### Option A: GUI
-1. Open **Task Scheduler**.
-2. Create Task.
-3. On **General**, choose a user account with network access.
-4. On **Triggers**, create two daily triggers (example: `08:00` and `20:00`).
-5. On **Actions**, set:
-   - Program/script: `powershell.exe`
-   - Arguments:
-     ```text
-     -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\Track-HostnameIPs.ps1" -InputCsvPath "C:\Path\To\devices.csv" -OutputCsvPath "C:\Path\To\ip-tracking.csv"
-     ```
-6. Save and test-run the task.
-
-### Option B: PowerShell command
+You can still override run times:
 
 ```powershell
-$scriptPath = "C:\Path\To\Track-HostnameIPs.ps1"
-$inputPath = "C:\Path\To\devices.csv"
-$outputPath = "C:\Path\To\ip-tracking.csv"
-
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -InputCsvPath `"$inputPath`" -OutputCsvPath `"$outputPath`""
-$trigger1 = New-ScheduledTaskTrigger -Daily -At 8:00AM
-$trigger2 = New-ScheduledTaskTrigger -Daily -At 8:00PM
-
-Register-ScheduledTask -TaskName 'MissingComputerTracker' -Action $action -Trigger @($trigger1, $trigger2) -Description 'Ping hostnames and track IP changes twice daily.'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-TrackerLoop.ps1 -RunTimes @([TimeSpan]::FromHours(10), [TimeSpan]::FromHours(15))
 ```
-
-## Run twice daily without Task Scheduler
-
-If you do not want to use Task Scheduler, use `Run-TrackerLoop.ps1`.
-
-This script runs continuously and executes `Track-HostnameIPs.ps1` at 08:00 and 20:00 each day.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-TrackerLoop.ps1 `
-  -ScriptPath .\Track-HostnameIPs.ps1 `
-  -InputCsvPath .\devices.csv `
-  -OutputCsvPath .\ip-tracking.csv
-```
-
-### Keep it running in the background
-
-- **Locked session:** works fine if the process is already running.
-- **If user logs off / machine reboots:** restart the loop via one of these:
-  - **Startup folder** (`shell:startup`) shortcut for login-based startup.
-  - **Windows service wrapper** (for example NSSM) if you need it to run without an interactive session.
-
-Example NSSM setup:
-
-```powershell
-nssm install MissingComputerTrackerLoop "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-NoProfile -ExecutionPolicy Bypass -File C:\Path\Run-TrackerLoop.ps1 -ScriptPath C:\Path\Track-HostnameIPs.ps1 -InputCsvPath C:\Path\devices.csv -OutputCsvPath C:\Path\ip-tracking.csv"
-nssm start MissingComputerTrackerLoop
-```
-
-## Notes
-
-- Keep the same output CSV path on every run so change history is preserved.
-- If a device is unreachable, `CurrentIP` is blank and `Status` is `Unreachable`.
-- `PreviousIP` reflects the prior run's `CurrentIP` value for that hostname.
