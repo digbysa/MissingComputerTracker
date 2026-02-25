@@ -164,7 +164,7 @@ if (-not (Test-Path -LiteralPath $outputFolderPath)) {
     New-Item -Path $outputFolderPath -ItemType Directory -Force | Out-Null
 }
 
-$inputRows = Import-Csv -LiteralPath $localInputPath
+$inputRows = @(Import-Csv -LiteralPath $localInputPath)
 if (-not $inputRows) {
     throw "Input CSV is empty: $localInputPath"
 }
@@ -178,17 +178,24 @@ foreach ($requiredColumn in $requiredColumns) {
 
 $subnetRows = @()
 if (Test-Path -LiteralPath $subnetPath) {
-    $rawSubnetRows = Import-Csv -LiteralPath $subnetPath
+    $rawSubnetRows = @(Import-Csv -LiteralPath $subnetPath -Header 'Cidr', 'Label', 'Notes')
 
     foreach ($rawSubnetRow in $rawSubnetRows) {
-        $properties = $rawSubnetRow.PSObject.Properties
-        if ($properties.Count -lt 2) {
+        $cidr = [string]$rawSubnetRow.Cidr
+        $label = [string]$rawSubnetRow.Label
+
+        if ([string]::IsNullOrWhiteSpace($cidr)) {
+            continue
+        }
+
+        # Allow optional header rows in SiteSubnets.csv.
+        if ($cidr -eq 'Cidr') {
             continue
         }
 
         $subnetRows += [pscustomobject]@{
-            Cidr  = [string]$properties[0].Value
-            Label = [string]$properties[1].Value
+            Cidr  = $cidr.Trim()
+            Label = $label.Trim()
         }
     }
 }
