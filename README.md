@@ -28,7 +28,7 @@ Output includes:
 - `Room` (updated from newest input row for each asset tag)
 - `Successfully Pinged` (`Yes` if ping succeeded at least once across runs)
 - `Latest Data --> IP Date / IP Address / Subnet / Logged User`
-- `Previous Data N --> IP Date / IP Address / Subnet / Logged User` for IP history
+- `Previous Data N --> IP Date / IP Address / Subnet / Logged User` for connection history (new columns are added whenever IP or logged-on user changes)
 
 > Note: CSV cannot create true merged Excel headers. The script uses grouped header names (for example, `Latest Data --> ...`) to preserve the same structure in CSV form.
 
