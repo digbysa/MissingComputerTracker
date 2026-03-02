@@ -519,8 +519,15 @@ foreach ($deviceKey in $allDeviceKeys) {
     }
 
     $latestIpFromExisting = if ($existingRow) { Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> IP Address' } else { '' }
+    $latestUserFromExisting = if ($existingRow) { Get-HistoryValue -Row $existingRow -PropertyName 'Latest Data --> Logged User' } else { '' }
 
-    if ($ipAddress -and $latestIpFromExisting -and $ipAddress -ne $latestIpFromExisting) {
+    $hasNewScanData = -not [string]::IsNullOrWhiteSpace($ipAddress) -or -not [string]::IsNullOrWhiteSpace($loggedUser)
+    $hasExistingLatestData = -not [string]::IsNullOrWhiteSpace($latestIpFromExisting) -or -not [string]::IsNullOrWhiteSpace($latestUserFromExisting)
+    $ipChanged = $ipAddress -ne $latestIpFromExisting
+    $userChanged = $loggedUser -ne $latestUserFromExisting
+    $latestDataChanged = $hasNewScanData -and $hasExistingLatestData -and ($ipChanged -or $userChanged)
+
+    if ($latestDataChanged) {
         $currentHistory = @(
             [pscustomobject]@{
                 IpDate    = $nowLocalFormatted
@@ -539,14 +546,14 @@ foreach ($deviceKey in $allDeviceKeys) {
     elseif (-not $existingRow) {
         $currentHistory = @(
             [pscustomobject]@{
-                IpDate    = if ($ipAddress) { $nowLocalFormatted } else { '' }
+                IpDate    = if ($hasNewScanData) { $nowLocalFormatted } else { '' }
                 IpAddress = $ipAddress
                 Subnet    = $subnetLabel
                 LoggedUser = $loggedUser
             }
         )
     }
-    elseif ($ipAddress -and $latestIpFromExisting -eq $ipAddress) {
+    elseif ($hasNewScanData -and -not $latestDataChanged) {
         if ($currentHistory.Count -eq 0) {
             $currentHistory = @([pscustomobject]@{ IpDate = $nowLocalFormatted; IpAddress = $ipAddress; Subnet = $subnetLabel; LoggedUser = $loggedUser })
         }
